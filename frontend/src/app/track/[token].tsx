@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 
-const API_URL = "http://127.0.0.1:8001";
+const API_URL = "http://10.24.233.119:8001";
 
 type TrackingData = {
   name?: string;
