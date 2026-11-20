@@ -39,6 +39,7 @@ type CurrentLocation = {
 export default function HomeScreen() {
   const [isRegister, setIsRegister] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
+  const [activeSection, setActiveSection] = useState<'home' | 'sos' | 'location' | 'contacts' | 'profile'>('home');
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -514,305 +515,487 @@ export default function HomeScreen() {
     );
   }
 
+
+  const navigationItems = [
+    { key: 'home' as const, label: 'Home', icon: '⌂' },
+    { key: 'sos' as const, label: 'Emergency SOS', icon: '!' },
+    { key: 'location' as const, label: 'Live Location', icon: '⌖' },
+    { key: 'contacts' as const, label: 'Trusted Contacts', icon: '♡' },
+    { key: 'profile' as const, label: 'My Profile', icon: '◉' },
+  ];
+
   return (
     <KeyboardAvoidingView
       style={styles.screen}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.logo}>SafeHer</Text>
-        <Text style={styles.subtitle}>
-          Your safety. Your control.
-        </Text>
+      <View style={styles.appShell}>
+        {loggedIn ? (
+          <View style={styles.sidebar}>
+            <View style={styles.sidebarBrand}>
+              <View style={styles.brandMark}>
+                <Text style={styles.brandMarkText}>S</Text>
+              </View>
+              {Platform.OS === 'web' ? (
+                <View>
+                  <Text style={styles.sidebarLogo}>SafeHer</Text>
+                  <Text style={styles.sidebarCaption}>SAFETY DASHBOARD</Text>
+                </View>
+              ) : null}
+            </View>
+
+            {Platform.OS === 'web' ? (
+              <Text style={styles.sidebarSectionLabel}>WORKSPACE</Text>
+            ) : null}
+            <View style={styles.sidebarNav}>
+              {navigationItems.map(item => (
+                <Pressable
+                  key={item.key}
+                  onPress={() => setActiveSection(item.key)}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.label}
+                  style={[
+                    styles.navItem,
+                    activeSection === item.key && styles.navItemActive,
+                  ]}
+                >
+                  <Text style={[
+                    styles.navIcon,
+                    activeSection === item.key && styles.navTextActive,
+                  ]}>{item.icon}</Text>
+                  {Platform.OS === 'web' ? (
+                    <Text style={[
+                      styles.navLabel,
+                      activeSection === item.key && styles.navTextActive,
+                    ]}>{item.label}</Text>
+                  ) : null}
+                </Pressable>
+              ))}
+            </View>
+
+            {Platform.OS === 'web' ? (
+              <View style={styles.sidebarBottom}>
+                <View style={styles.sidebarStatusDot} />
+                <View style={styles.sidebarStatusCopy}>
+                  <Text style={styles.sidebarStatusTitle}>Your safety space</Text>
+                  <Text style={styles.sidebarStatusText}>Private · Secure · Connected</Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
+      <ScrollView
+        style={loggedIn ? styles.mainScroll : undefined}
+        contentContainerStyle={[styles.container, loggedIn && styles.dashboardContainer]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.topBar}>
+          {loggedIn ? (
+            <View>
+              <Text style={styles.pageHeading}>
+                {activeSection === 'home' ? 'Home' :
+                  activeSection === 'sos' ? 'Emergency SOS' :
+                  activeSection === 'location' ? 'Live Location' :
+                  activeSection === 'contacts' ? 'Trusted Contacts' : 'My Profile'}
+              </Text>
+              <Text style={styles.pageSubheading}>
+                {activeSection === 'home' ? 'Your personal safety overview.' :
+                  activeSection === 'sos' ? 'Emergency assistance and alert controls.' :
+                  activeSection === 'location' ? 'Manage your current location and live sharing.' :
+                  activeSection === 'contacts' ? 'Manage the people in your trusted circle.' : 'Your account information and settings.'}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.brandRow}>
+              <View style={styles.brandMark}>
+                <Text style={styles.brandMarkText}>S</Text>
+              </View>
+              <View>
+                <Text style={styles.logo}>SafeHer</Text>
+                <Text style={styles.brandCaption}>PERSONAL SAFETY, REIMAGINED</Text>
+              </View>
+            </View>
+          )}
+          {loggedIn ? (
+            <Pressable onPress={logout} style={styles.logoutButton}>
+              <Text style={styles.logoutText}>Log out</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.secureBadge}>
+              <Text style={styles.secureBadgeText}>● SECURE</Text>
+            </View>
+          )}
+        </View>
 
         {!loggedIn ? (
-          <View style={styles.card}>
-            <Text style={styles.heading}>
-              {isRegister ? 'Create Account' : 'Welcome Back'}
-            </Text>
-
-            {isRegister && (
-              <>
-                <Text style={styles.label}>Full Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter your name"
-                  value={name}
-                  onChangeText={setName}
-                />
-
-                <Text style={styles.label}>Phone Number</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="+91XXXXXXXXXX"
-                  value={phone}
-                  onChangeText={setPhone}
-                  keyboardType="phone-pad"
-                />
-              </>
-            )}
-
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-
-            {message ? (
-              <Text style={styles.message}>{message}</Text>
-            ) : null}
-
-            <ActionButton
-              title={
-                loading
-                  ? 'Please wait...'
-                  : isRegister
-                    ? 'Create Account'
-                    : 'Login'
-              }
-              onPress={handleAuth}
-              disabled={loading}
-            />
-
-            <Pressable
-              onPress={() => {
-                setIsRegister(!isRegister);
-                setMessage('');
-              }}
-              style={styles.switchButton}
-            >
-              <Text style={styles.switchText}>
-                {isRegister
-                  ? 'Already have an account? Login'
-                  : "Don't have an account? Register"}
+          <View style={styles.authWrap}>
+            <View style={styles.authIntro}>
+              <Text style={styles.eyebrow}>YOUR SAFETY COMPANION</Text>
+              <Text style={styles.authTitle}>
+                {isRegister ? 'Create your safe space.' : 'Your safety comes first.'}
               </Text>
-            </Pressable>
+              <Text style={styles.authDescription}>
+                {isRegister
+                  ? 'Set up your SafeHer account to connect with the people you trust.'
+                  : 'Sign in to access your trusted contacts and emergency safety tools.'}
+              </Text>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.heading}>
+                {isRegister ? 'Create account' : 'Welcome back'}
+              </Text>
+              <Text style={styles.cardIntro}>
+                {isRegister ? 'A few details to get you started.' : 'Enter your details to continue.'}
+              </Text>
+
+              {isRegister && (
+                <>
+                  <Text style={styles.label}>Full name</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter your name"
+                    placeholderTextColor="#9A9EAA"
+                    value={name}
+                    onChangeText={setName}
+                  />
+
+                  <Text style={styles.label}>Phone number</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="+91XXXXXXXXXX"
+                    placeholderTextColor="#9A9EAA"
+                    value={phone}
+                    onChangeText={setPhone}
+                    keyboardType="phone-pad"
+                  />
+                </>
+              )}
+
+              <Text style={styles.label}>Email address</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="you@example.com"
+                placeholderTextColor="#9A9EAA"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              <Text style={styles.label}>Password</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your password"
+                placeholderTextColor="#9A9EAA"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+              />
+
+              {message ? <Text style={styles.message}>{message}</Text> : null}
+
+              <ActionButton
+                title={
+                  loading
+                    ? 'Please wait...'
+                    : isRegister
+                      ? 'Create my account'
+                      : 'Sign in securely'
+                }
+                onPress={handleAuth}
+                disabled={loading}
+              />
+
+              <Pressable
+                onPress={() => {
+                  setIsRegister(!isRegister);
+                  setMessage('');
+                }}
+                style={styles.switchButton}
+              >
+                <Text style={styles.switchText}>
+                  {isRegister
+                    ? 'Already have an account? Sign in'
+                    : "New to SafeHer? Create an account"}
+                </Text>
+              </Pressable>
+            </View>
+            <Text style={styles.authFootnote}>Your trusted circle. Your control. Your safety.</Text>
           </View>
         ) : (
           <>
-            {/* USER PROFILE */}
-            <View style={styles.card}>
-              <Text style={styles.heading}>
-                Welcome, {user?.name}
+            <View style={styles.welcomeBlock}>
+              <Text style={styles.eyebrow}>YOUR PERSONAL SAFETY SPACE</Text>
+              <Text style={styles.welcomeTitle}>Hello, {user?.name?.split(' ')[0] || 'there'}.</Text>
+              <Text style={styles.welcomeDescription}>
+                Stay connected to the people and tools that help you feel safer.
               </Text>
-
-              <Text style={styles.profileText}>{user?.email}</Text>
-              <Text style={styles.profileText}>{user?.phone}</Text>
-
-              <Pressable
-                onPress={logout}
-                style={styles.logoutButton}
-              >
-                <Text style={styles.logoutText}>Logout</Text>
-              </Pressable>
             </View>
 
-            {/* GPS AND LIVE TRACKING */}
-            <View style={styles.card}>
-              <Text style={styles.heading}>Live Location Tracking</Text>
+            {message ? (
+              <View style={styles.notice}>
+                <Text style={styles.noticeText}>{message}</Text>
+              </View>
+            ) : null}
 
-              <Text style={styles.description}>
-                Start tracking to automatically refresh your location
-                while SafeHer is open.
+            {(activeSection === 'home' || activeSection === 'sos') && (
+              <>
+            {/* SOS — primary action */}
+            <View style={styles.sosCard}>
+              <View style={styles.sosCardHeader}>
+                <View>
+                  <Text style={styles.sosEyebrow}>EMERGENCY ASSISTANCE</Text>
+                  <Text style={styles.sosTitle}>Need help right now?</Text>
+                </View>
+                <View style={styles.sosStatusBadge}>
+                  <View style={styles.sosStatusDot} />
+                  <Text style={styles.sosStatusText}>
+                    {activeIncidentId !== null ? 'SOS ACTIVE' : 'READY'}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.sosDescription}>
+                {activeIncidentId !== null
+                  ? 'Your emergency session is active. Your foreground location updates are being shared.'
+                  : 'Press the button to begin a 5-second safety countdown. You can cancel before your alert is sent.'}
               </Text>
 
-              <View
-                style={[
-                  styles.statusBox,
-                  isTracking
-                    ? styles.trackingStatus
-                    : styles.stoppedStatus,
-                ]}
-              >
-                <View
-                  style={[
-                    styles.statusDot,
-                    isTracking
-                      ? styles.activeDot
-                      : styles.inactiveDot,
-                  ]}
-                />
+              <View style={styles.sosButtonArea}>
+                <View style={styles.sosOuterRing}>
+                  <View style={styles.sosMiddleRing}>
+                    <Pressable
+                      onPress={
+                        activeIncidentId !== null
+                          ? stopSosIncident
+                          : sosCountdown !== null
+                            ? cancelSosCountdown
+                            : beginSosCountdown
+                      }
+                      disabled={sosBusy && sosCountdown === null && activeIncidentId === null}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        activeIncidentId !== null
+                          ? 'Stop emergency session'
+                          : sosCountdown !== null
+                            ? 'Cancel SOS countdown'
+                            : 'Activate emergency SOS'
+                      }
+                      style={({ pressed }) => [
+                        styles.sosCircle,
+                        pressed && styles.sosCirclePressed,
+                        sosBusy && sosCountdown === null && styles.disabledButton,
+                      ]}
+                    >
+                      <Text style={styles.sosCircleTop}>
+                        {activeIncidentId !== null
+                          ? 'ACTIVE'
+                          : sosCountdown !== null
+                            ? 'CANCEL'
+                            : sosBusy
+                              ? 'PLEASE WAIT'
+                              : 'TAP FOR'}
+                      </Text>
+                      <Text style={styles.sosCircleMain}>
+                        {activeIncidentId !== null
+                          ? 'STOP'
+                          : sosCountdown !== null
+                            ? String(sosCountdown)
+                            : 'SOS'}
+                      </Text>
+                      <Text style={styles.sosCircleBottom}>
+                        {activeIncidentId !== null
+                          ? 'END SESSION'
+                          : sosCountdown !== null
+                            ? 'TO CANCEL'
+                            : 'EMERGENCY'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
 
+              <Text style={styles.sosHelper}>
+                {activeIncidentId !== null
+                  ? 'Tap STOP only when you are safe and want to end sharing.'
+                  : sosCountdown !== null
+                    ? 'Your alert has not been sent yet. Tap the circle to cancel.'
+                    : contacts.length === 0
+                      ? 'Add at least one consenting emergency contact to enable SOS.'
+                      : 'Your consenting contacts will receive an email with your initial location and a tracking link.'}
+              </Text>
+
+              <Pressable onPress={callEmergencyNumber} style={styles.call112Button}>
+                <Text style={styles.call112Icon}>☎</Text>
+                <Text style={styles.call112Text}>Call emergency services</Text>
+                <Text style={styles.call112Number}>112</Text>
+              </Pressable>
+
+              {sosResult ? (
+                <View style={styles.resultPanel}>
+                  <Text style={styles.resultText}>{sosResult}</Text>
+                </View>
+              ) : null}
+
+              <Text style={styles.safetyDisclaimer}>
+                SafeHer sends alerts to your saved contacts; it does not automatically dispatch police.
+                GPS updates require permission, internet access and the app to remain open.
+              </Text>
+            </View>
+
+              </>
+            )}
+
+            {activeSection === 'home' && (
+              <>
+            {/* Quick overview */}
+            <View style={styles.sectionHeadingRow}>
+              <Text style={styles.sectionTitle}>Your safety tools</Text>
+              <Text style={styles.sectionMeta}>TOOLS & STATUS</Text>
+            </View>
+
+            <View style={styles.quickGrid}>
+              <View style={styles.quickTile}>
+                <View style={[styles.quickIcon, styles.quickIconRose]}>
+                  <Text style={styles.quickIconText}>⌖</Text>
+                </View>
+                <Text style={styles.quickTitle}>Location</Text>
+                <Text style={styles.quickValue}>
+                  {location ? 'Location ready' : 'Not fetched'}
+                </Text>
+              </View>
+              <View style={styles.quickTile}>
+                <View style={[styles.quickIcon, styles.quickIconGreen]}>
+                  <Text style={styles.quickIconText}>◎</Text>
+                </View>
+                <Text style={styles.quickTitle}>Live tracking</Text>
+                <Text style={styles.quickValue}>
+                  {isTracking ? 'Currently active' : 'Currently off'}
+                </Text>
+              </View>
+              <View style={styles.quickTile}>
+                <View style={[styles.quickIcon, styles.quickIconGold]}>
+                  <Text style={styles.quickIconText}>♡</Text>
+                </View>
+                <Text style={styles.quickTitle}>Trusted people</Text>
+                <Text style={styles.quickValue}>{contacts.length} saved contacts</Text>
+              </View>
+            </View>
+
+              </>
+            )}
+
+            {activeSection === 'location' && (
+              <>
+            {/* Location and tracking */}
+            <View style={styles.card}>
+              <View style={styles.cardTitleRow}>
+                <View style={styles.sectionIcon}>
+                  <Text style={styles.sectionIconText}>⌖</Text>
+                </View>
+                <View style={styles.cardTitleCopy}>
+                  <Text style={styles.heading}>Live location</Text>
+                  <Text style={styles.cardIntro}>Your current GPS position and sharing status.</Text>
+                </View>
+              </View>
+
+              <View style={[styles.statusBox, isTracking ? styles.trackingStatus : styles.stoppedStatus]}>
+                <View style={[styles.statusDot, isTracking ? styles.activeDot : styles.inactiveDot]} />
                 <Text style={styles.statusText}>
-                  {isTracking
-                    ? 'LIVE TRACKING ACTIVE'
-                    : 'LIVE TRACKING STOPPED'}
+                  {isTracking ? 'LIVE TRACKING IS ON' : 'LIVE TRACKING IS OFF'}
                 </Text>
               </View>
 
               {!isTracking ? (
-                <ActionButton
-                  title="Start Live Tracking"
-                  onPress={startLiveTracking}
-                />
+                <ActionButton title="Start live tracking" onPress={startLiveTracking} />
               ) : (
-                <ActionButton
-                  title="Stop Live Tracking"
-                  onPress={stopLiveTracking}
-                  secondary
-                />
+                <ActionButton title="Stop live tracking" onPress={stopLiveTracking} secondary />
               )}
 
               <ActionButton
-                title={
-                  locationLoading
-                    ? 'Getting Location...'
-                    : 'Get Current Location'
-                }
+                title={locationLoading ? 'Getting location...' : 'Refresh my location'}
                 onPress={getCurrentLocation}
                 disabled={locationLoading}
                 secondary
               />
 
-              {locationLoading && (
-                <ActivityIndicator
-                  size="large"
-                  color="#C2185B"
-                  style={styles.loader}
-                />
-              )}
-
-              {locationError ? (
-                <Text style={styles.error}>{locationError}</Text>
+              {locationLoading ? (
+                <ActivityIndicator size="large" color="#D92F55" style={styles.loader} />
               ) : null}
+
+              {locationError ? <Text style={styles.error}>{locationError}</Text> : null}
 
               {location ? (
                 <View style={styles.locationDetails}>
-                  <Text style={styles.locationTitle}>
-                    {isTracking
-                      ? 'Latest Live Coordinates'
-                      : 'Current Coordinates'}
-                  </Text>
-
+                  <Text style={styles.locationTitle}>LOCATION DETAILS</Text>
+                  <Text style={styles.detailText}>Latitude  ·  {location.latitude.toFixed(6)}</Text>
+                  <Text style={styles.detailText}>Longitude  ·  {location.longitude.toFixed(6)}</Text>
                   <Text style={styles.detailText}>
-                    Latitude: {location.latitude.toFixed(6)}
+                    Accuracy  ·  {location.accuracy == null ? 'Not available' : `±${Math.round(location.accuracy)} m`}
                   </Text>
-
-                  <Text style={styles.detailText}>
-                    Longitude: {location.longitude.toFixed(6)}
-                  </Text>
-
-                  <Text style={styles.detailText}>
-                    Accuracy:{' '}
-                    {location.accuracy == null
-                      ? 'Not available'
-                      : `±${Math.round(location.accuracy)} metres`}
-                  </Text>
-
-                  <ActionButton
-                    title="Open in Google Maps"
-                    onPress={openGoogleMaps}
-                  />
+                  <ActionButton title="Open in Google Maps" onPress={openGoogleMaps} />
                 </View>
               ) : (
                 <Text style={styles.emptyText}>
-                  Your location will appear here after GPS is retrieved.
+                  Your coordinates will appear here after you refresh your GPS location.
                 </Text>
               )}
 
               <Text style={styles.note}>
-                This is foreground tracking only. Tracking stops when
-                you stop it or leave the screen. It does not yet send
-                your location to emergency contacts.
+                Live tracking is foreground-only. It stops when you stop it or leave this screen.
               </Text>
             </View>
 
-            {/* SOS AND EMERGENCY CALL */}
+              </>
+            )}
+
+            {activeSection === 'contacts' && (
+              <>
+            {/* Emergency contacts */}
             <View style={styles.card}>
-              <Text style={styles.heading}>Emergency SOS</Text>
-              <Text style={styles.description}>
-                Press SOS to start a 5-second countdown. You can cancel before
-                the alert is sent. SafeHer will email your consenting contacts
-                with your initial location and a tracking link.
-              </Text>
+              <View style={styles.cardTitleRow}>
+                <View style={styles.sectionIcon}>
+                  <Text style={styles.sectionIconText}>♡</Text>
+                </View>
+                <View style={styles.cardTitleCopy}>
+                  <Text style={styles.heading}>Trusted contacts</Text>
+                  <Text style={styles.cardIntro}>People who can receive your emergency alert.</Text>
+                </View>
+              </View>
 
-              {activeIncidentId === null ? (
-                sosCountdown === null ? (
-                  <ActionButton
-                    title={sosBusy ? 'Preparing SOS...' : 'ACTIVATE SOS'}
-                    onPress={beginSosCountdown}
-                    disabled={sosBusy || contacts.length === 0}
-                  />
-                ) : (
-                  <>
-                    <Text style={styles.sosCountdown}>
-                      SOS sends in {sosCountdown}...
-                    </Text>
-                    <ActionButton
-                      title="CANCEL SOS"
-                      onPress={cancelSosCountdown}
-                      secondary
-                    />
-                  </>
-                )
-              ) : (
-                <ActionButton
-                  title="STOP SOS AND LOCATION SHARING"
-                  onPress={stopSosIncident}
-                  secondary
-                />
-              )}
+              <View style={styles.contactCountBar}>
+                <Text style={styles.contactCountLabel}>SAVED CONTACTS</Text>
+                <Text style={styles.contactCountValue}>{contacts.length}</Text>
+              </View>
 
-              <ActionButton
-                title="CALL EMERGENCY SERVICES — 112"
-                onPress={callEmergencyNumber}
-                secondary
-              />
-
-              {sosResult ? (
-                <Text style={styles.message}>{sosResult}</Text>
-              ) : null}
-
-              <Text style={styles.note}>
-                SOS email delivery and live GPS updates require internet access.
-                Foreground tracking works only while the app remains open; this
-                is not background tracking and does not automatically contact
-                police or emergency services.
-              </Text>
-            </View>
-
-            {/* EMERGENCY CONTACTS */}
-            <View style={styles.card}>
-              <Text style={styles.heading}>Emergency Contacts</Text>
-
-              <Text style={styles.description}>
-                Add trusted people who may be contacted in an emergency.
-              </Text>
-
-              <Text style={styles.label}>Contact Name</Text>
+              <Text style={styles.label}>Contact name</Text>
               <TextInput
                 style={styles.input}
                 placeholder="Enter contact name"
+                placeholderTextColor="#9A9EAA"
                 value={contactName}
                 onChangeText={setContactName}
               />
 
-              <Text style={styles.label}>Phone Number</Text>
+              <Text style={styles.label}>Phone number</Text>
               <TextInput
                 style={styles.input}
                 placeholder="+91XXXXXXXXXX"
+                placeholderTextColor="#9A9EAA"
                 value={contactPhone}
                 onChangeText={setContactPhone}
                 keyboardType="phone-pad"
               />
 
-              <Text style={styles.label}>Email Address</Text>
+              <Text style={styles.label}>Email address</Text>
               <TextInput
                 style={styles.input}
                 placeholder="contact@example.com"
+                placeholderTextColor="#9A9EAA"
                 value={contactEmail}
                 onChangeText={setContactEmail}
                 keyboardType="email-address"
@@ -820,82 +1003,79 @@ export default function HomeScreen() {
                 autoCorrect={false}
               />
 
-              <Pressable
-                style={styles.consentRow}
-                onPress={() => setConsent(!consent)}
-              >
-                <View
-                  style={[
-                    styles.checkbox,
-                    consent && styles.checkedBox,
-                  ]}
-                >
-                  {consent && (
-                    <Text style={styles.checkmark}>✓</Text>
-                  )}
+              <Pressable style={styles.consentRow} onPress={() => setConsent(!consent)}>
+                <View style={[styles.checkbox, consent && styles.checkedBox]}>
+                  {consent ? <Text style={styles.checkmark}>✓</Text> : null}
                 </View>
-
                 <Text style={styles.consentText}>
-                  I confirm that this person has agreed to be my
-                  emergency contact.
+                  I confirm this person has agreed to be my emergency contact.
                 </Text>
               </Pressable>
 
               <ActionButton
-                title={
-                  loading
-                    ? 'Please wait...'
-                    : 'Add Emergency Contact'
-                }
+                title={loading ? 'Please wait...' : '＋  Add trusted contact'}
                 onPress={addContact}
                 disabled={loading}
               />
 
-              {message ? (
-                <Text style={styles.message}>{message}</Text>
-              ) : null}
+              {message ? <Text style={styles.message}>{message}</Text> : null}
 
-              <Text style={styles.subheading}>
-                Your Saved Contacts ({contacts.length})
-              </Text>
-
+              <Text style={styles.subheading}>Your saved people</Text>
               {contacts.length === 0 ? (
-                <Text style={styles.emptyText}>
-                  No emergency contacts added yet.
-                </Text>
+                <View style={styles.emptyContacts}>
+                  <Text style={styles.emptyContactsIcon}>♡</Text>
+                  <Text style={styles.emptyText}>No trusted contacts yet.</Text>
+                  <Text style={styles.emptySubtext}>Add someone you trust using the form above.</Text>
+                </View>
               ) : (
                 contacts.map(contact => (
                   <View key={contact.id} style={styles.contactItem}>
-                    <View style={styles.contactInfo}>
-                      <Text style={styles.contactName}>
-                        {contact.name}
-                      </Text>
-
-                      <Text style={styles.contactPhone}>
-                        {contact.phone}
-                      </Text>
-                      <Text style={styles.contactPhone}>
-                        {contact.email || 'No email saved'}
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>
+                        {contact.name.trim().charAt(0).toUpperCase()}
                       </Text>
                     </View>
-
-                    <Pressable
-                      onPress={() => deleteContact(contact.id)}
-                      style={styles.deleteButton}
-                    >
-                      <Text style={styles.deleteText}>Delete</Text>
+                    <View style={styles.contactInfo}>
+                      <Text style={styles.contactName}>{contact.name}</Text>
+                      <Text style={styles.contactPhone}>{contact.phone}</Text>
+                      <Text style={styles.contactPhone}>{contact.email || 'No email saved'}</Text>
+                    </View>
+                    <Pressable onPress={() => deleteContact(contact.id)} style={styles.deleteButton}>
+                      <Text style={styles.deleteText}>Remove</Text>
                     </Pressable>
                   </View>
                 ))
               )}
             </View>
+
+              </>
+            )}
+
+            {activeSection === 'profile' && (
+              <>
+            <View style={styles.profileCard}>
+              <View style={styles.profileAvatar}>
+                <Text style={styles.profileAvatarText}>
+                  {user?.name?.trim().charAt(0).toUpperCase() || 'S'}
+                </Text>
+              </View>
+              <View style={styles.profileCopy}>
+                <Text style={styles.profileName}>{user?.name}</Text>
+                <Text style={styles.profileText}>{user?.email}</Text>
+                <Text style={styles.profileText}>{user?.phone}</Text>
+              </View>
+              <Pressable onPress={logout} style={styles.profileLogout}>
+                <Text style={styles.profileLogoutText}>Log out</Text>
+              </Pressable>
+            </View>
+              </>
+            )}
           </>
         )}
 
-        <Text style={styles.footer}>
-          SafeHer • Stay aware. Stay safe.
-        </Text>
+        <Text style={styles.footer}>SAFEHER  ·  STAY AWARE. STAY SAFE.</Text>
       </ScrollView>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -903,256 +1083,837 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#FFF4F7',
+    backgroundColor: '#F6F7FB',
+  },
+  appShell: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#F6F7FB',
+  },
+  sidebar: {
+    width: Platform.OS === 'web' ? 252 : 76,
+    flexShrink: 0,
+    backgroundColor: '#FFFFFF',
+    borderRightWidth: 1,
+    borderRightColor: '#E9ECF2',
+    paddingTop: Platform.OS === 'web' ? 28 : 18,
+    paddingHorizontal: Platform.OS === 'web' ? 18 : 8,
+    paddingBottom: 20,
+  },
+  sidebarBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: Platform.OS === 'web' ? 4 : 0,
+    justifyContent: Platform.OS === 'web' ? 'flex-start' : 'center',
+    marginBottom: 38,
+  },
+  sidebarLogo: {
+    color: '#20283B',
+    fontSize: 21,
+    fontWeight: '900',
+    letterSpacing: -0.7,
+  },
+  sidebarCaption: {
+    color: '#9AA1AF',
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginTop: 2,
+  },
+  sidebarSectionLabel: {
+    color: '#A1A7B4',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.4,
+    marginLeft: 10,
+    marginBottom: 12,
+  },
+  sidebarNav: {
+    gap: 7,
+  },
+  navItem: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+    paddingHorizontal: Platform.OS === 'web' ? 13 : 0,
+    justifyContent: Platform.OS === 'web' ? 'flex-start' : 'center',
+    borderRadius: 13,
+    backgroundColor: 'transparent',
+  },
+  navItemActive: {
+    backgroundColor: '#FFF0F3',
+  },
+  navIcon: {
+    width: 24,
+    textAlign: 'center',
+    color: '#778094',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  navLabel: {
+    color: '#687286',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  navTextActive: {
+    color: '#D92F55',
+  },
+  sidebarBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 'auto',
+    padding: 12,
+    backgroundColor: '#F7F8FB',
+    borderRadius: 13,
+  },
+  sidebarStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#36A36B',
+  },
+  sidebarStatusCopy: {
+    flex: 1,
+  },
+  sidebarStatusTitle: {
+    color: '#39445A',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  sidebarStatusText: {
+    color: '#9299A7',
+    fontSize: 8,
+    marginTop: 3,
+  },
+  mainScroll: {
+    flex: 1,
+  },
+  dashboardContainer: {
+    maxWidth: 1120,
+    paddingHorizontal: Platform.OS === 'web' ? 34 : 16,
+    paddingTop: Platform.OS === 'web' ? 30 : 20,
+  },
+  pageHeading: {
+    color: '#20283B',
+    fontSize: 25,
+    fontWeight: '900',
+    letterSpacing: -0.7,
+  },
+  pageSubheading: {
+    color: '#858D9D',
+    fontSize: 12,
+    marginTop: 4,
   },
   container: {
     flexGrow: 1,
-    padding: 20,
-    paddingTop: 45,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'web' ? 28 : 48,
+    paddingBottom: 44,
+  },
+  topBar: {
+    width: '100%',
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 30,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+  brandMark: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#D92F55',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandMarkText: {
+    color: '#FFFFFF',
+    fontSize: 23,
+    fontWeight: '900',
   },
   logo: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#C2185B',
+    fontSize: 25,
+    fontWeight: '900',
+    color: '#20283B',
+    letterSpacing: -0.8,
   },
-  subtitle: {
-    color: '#777',
-    fontSize: 15,
-    marginBottom: 25,
+  brandCaption: {
+    color: '#969BA9',
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 1.15,
+    marginTop: 2,
+  },
+  secureBadge: {
+    backgroundColor: '#EAF6EF',
+    borderRadius: 20,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  secureBadgeText: {
+    color: '#278451',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  logoutButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E8EAF0',
+  },
+  logoutText: {
+    color: '#60697B',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  authWrap: {
+    width: '100%',
+    maxWidth: 500,
+    alignSelf: 'center',
+  },
+  authIntro: {
+    marginBottom: 22,
+  },
+  eyebrow: {
+    color: '#D92F55',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.7,
+    marginBottom: 10,
+  },
+  authTitle: {
+    color: '#20283B',
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '900',
+    letterSpacing: -1.1,
+  },
+  authDescription: {
+    color: '#737B8C',
+    fontSize: 14,
+    lineHeight: 22,
+    marginTop: 10,
+    maxWidth: 420,
   },
   card: {
     width: '100%',
-    maxWidth: 520,
     backgroundColor: '#FFFFFF',
     padding: 22,
-    borderRadius: 18,
-    marginBottom: 20,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    borderRadius: 22,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#ECEEF3',
+    elevation: 2,
+    shadowColor: '#1B2540',
+    shadowOpacity: 0.045,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 5 },
   },
   heading: {
-    fontSize: 23,
-    fontWeight: 'bold',
-    color: '#C2185B',
-    marginBottom: 14,
+    fontSize: 19,
+    fontWeight: '800',
+    color: '#20283B',
+    letterSpacing: -0.35,
+  },
+  cardIntro: {
+    color: '#8A91A0',
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 4,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#444',
-    marginBottom: 7,
-    marginTop: 12,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#535D70',
+    marginBottom: 8,
+    marginTop: 17,
   },
   input: {
     width: '100%',
     borderWidth: 1,
-    borderColor: '#E5C8D3',
-    borderRadius: 10,
-    padding: 13,
-    fontSize: 15,
-    backgroundColor: '#FFFBFC',
+    borderColor: '#E5E8EF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    fontSize: 14,
+    color: '#252D40',
+    backgroundColor: '#FAFBFD',
   },
   button: {
-    backgroundColor: '#C2185B',
-    padding: 15,
-    borderRadius: 11,
+    backgroundColor: '#D92F55',
+    paddingVertical: 15,
+    paddingHorizontal: 18,
+    borderRadius: 13,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 17,
+    minHeight: 50,
   },
   secondaryButton: {
-    backgroundColor: '#FCE4EC',
+    backgroundColor: '#F3F4F8',
     borderWidth: 1,
-    borderColor: '#E8B7C9',
+    borderColor: '#E5E8EF',
   },
   disabledButton: {
     opacity: 0.55,
   },
   buttonText: {
     color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 15,
+    fontWeight: '800',
+    fontSize: 14,
+    letterSpacing: 0.1,
   },
   secondaryButtonText: {
-    color: '#C2185B',
+    color: '#3C465B',
   },
   switchButton: {
-    marginTop: 18,
+    marginTop: 20,
     alignItems: 'center',
   },
   switchText: {
-    color: '#C2185B',
-    fontWeight: '600',
-  },
-  message: {
-    color: '#C2185B',
-    marginTop: 12,
+    color: '#D92F55',
+    fontWeight: '800',
     fontSize: 13,
   },
+  message: {
+    color: '#C43B55',
+    backgroundColor: '#FFF0F2',
+    borderRadius: 10,
+    padding: 11,
+    marginTop: 13,
+    fontSize: 12,
+    lineHeight: 18,
+  },
   error: {
-    color: '#B00020',
+    color: '#B42338',
     marginTop: 12,
     lineHeight: 20,
+    fontSize: 13,
   },
-  profileText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 5,
-  },
-  logoutButton: {
-    alignSelf: 'flex-end',
-    marginTop: 12,
-    padding: 8,
-  },
-  logoutText: {
-    color: '#C2185B',
-    fontWeight: 'bold',
-  },
-  description: {
-    color: '#666',
-    fontSize: 14,
-    lineHeight: 21,
-    marginBottom: 8,
-  },
-  sosCountdown: {
-    color: '#B00020',
-    fontSize: 22,
-    fontWeight: 'bold',
+  authFootnote: {
     textAlign: 'center',
-    marginTop: 18,
+    color: '#A1A6B2',
+    fontSize: 11,
+    marginTop: 20,
+  },
+  welcomeBlock: {
+    marginBottom: 20,
+  },
+  welcomeTitle: {
+    color: '#20283B',
+    fontSize: 31,
+    fontWeight: '900',
+    letterSpacing: -1,
+  },
+  welcomeDescription: {
+    color: '#7B8393',
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 6,
+    maxWidth: 460,
+  },
+  notice: {
+    width: '100%',
+    backgroundColor: '#FFF5E8',
+    borderColor: '#F6D9A8',
+    borderWidth: 1,
+    borderRadius: 13,
+    padding: 13,
+    marginBottom: 16,
+  },
+  noticeText: {
+    color: '#8D5A13',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  sosCard: {
+    width: '100%',
+    backgroundColor: '#20283B',
+    borderRadius: 26,
+    padding: 22,
+    marginBottom: 25,
+    overflow: 'hidden',
+  },
+  sosCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  sosEyebrow: {
+    color: '#F6A7B5',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  sosTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+    marginTop: 5,
+    letterSpacing: -0.4,
+  },
+  sosStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#354158',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  sosStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#6FE0A0',
+    marginRight: 6,
+  },
+  sosStatusText: {
+    color: '#E8EDF5',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.7,
+  },
+  sosDescription: {
+    color: '#C2CAD8',
+    fontSize: 12,
+    lineHeight: 19,
+    marginTop: 12,
+    maxWidth: 460,
+  },
+  sosButtonArea: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 23,
+  },
+  sosOuterRing: {
+    width: 224,
+    height: 224,
+    borderRadius: 112,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sosMiddleRing: {
+    width: 202,
+    height: 202,
+    borderRadius: 101,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sosCircle: {
+    width: 174,
+    height: 174,
+    borderRadius: 87,
+    backgroundColor: '#E52F4F',
+    borderWidth: 7,
+    borderColor: '#F57B8E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
+    shadowColor: '#F13F5E',
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  sosCirclePressed: {
+    transform: [{ scale: 0.97 }],
+    backgroundColor: '#C91F40',
+  },
+  sosCircleTop: {
+    color: '#FFE7EA',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+  sosCircleMain: {
+    color: '#FFFFFF',
+    fontSize: 43,
+    lineHeight: 50,
+    fontWeight: '900',
+    letterSpacing: -1,
+  },
+  sosCircleBottom: {
+    color: '#FFE7EA',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  sosHelper: {
+    color: '#C2CAD8',
+    fontSize: 11,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 17,
+  },
+  call112Button: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 13,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+  },
+  call112Icon: {
+    color: '#D92F55',
+    fontSize: 17,
+    marginRight: 8,
+  },
+  call112Text: {
+    color: '#30394C',
+    fontSize: 12,
+    fontWeight: '800',
+    flex: 1,
+  },
+  call112Number: {
+    color: '#D92F55',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  resultPanel: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 11,
+    padding: 12,
+    marginTop: 13,
+  },
+  resultText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    lineHeight: 18,
+  },
+  safetyDisclaimer: {
+    color: '#AEB8C9',
+    fontSize: 10,
+    lineHeight: 16,
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  sectionHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    color: '#20283B',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+  },
+  sectionMeta: {
+    color: '#A0A6B3',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  quickGrid: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 18,
+  },
+  quickTile: {
+    flex: 1,
+    minWidth: 0,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#ECEEF3',
+    borderRadius: 17,
+    padding: 12,
+  },
+  quickIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  quickIconRose: { backgroundColor: '#FFF0F2' },
+  quickIconGreen: { backgroundColor: '#EAF7F0' },
+  quickIconGold: { backgroundColor: '#FFF6E7' },
+  quickIconText: {
+    color: '#3B465B',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  quickTitle: {
+    color: '#30394C',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  quickValue: {
+    color: '#9299A8',
+    fontSize: 9,
+    lineHeight: 14,
+    marginTop: 4,
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  sectionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: '#FFF0F2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  sectionIconText: {
+    color: '#D92F55',
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  cardTitleCopy: {
+    flex: 1,
   },
   statusBox: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    borderRadius: 10,
-    marginTop: 10,
+    borderRadius: 11,
+    marginTop: 2,
+    marginBottom: 3,
   },
-  trackingStatus: {
-    backgroundColor: '#E7F6EC',
-  },
-  stoppedStatus: {
-    backgroundColor: '#F3F3F3',
-  },
+  trackingStatus: { backgroundColor: '#EAF7F0' },
+  stoppedStatus: { backgroundColor: '#F3F4F7' },
   statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginRight: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 9,
   },
-  activeDot: {
-    backgroundColor: '#1B9B50',
-  },
-  inactiveDot: {
-    backgroundColor: '#999999',
-  },
+  activeDot: { backgroundColor: '#26945A' },
+  inactiveDot: { backgroundColor: '#9AA1AE' },
   statusText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#444',
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#536075',
+    letterSpacing: 0.6,
   },
-  loader: {
-    marginTop: 15,
-  },
+  loader: { marginTop: 15 },
   locationDetails: {
-    marginTop: 18,
-    padding: 14,
-    backgroundColor: '#FFF4F7',
-    borderRadius: 12,
+    marginTop: 16,
+    padding: 15,
+    backgroundColor: '#F5F8FC',
+    borderRadius: 13,
   },
   locationTitle: {
-    color: '#237A45',
-    fontWeight: 'bold',
-    marginBottom: 10,
+    color: '#278451',
+    fontWeight: '900',
+    fontSize: 10,
+    letterSpacing: 1,
+    marginBottom: 12,
   },
   detailText: {
-    color: '#444',
-    fontSize: 14,
-    marginBottom: 8,
+    color: '#596477',
+    fontSize: 12,
+    marginBottom: 9,
   },
   note: {
-    color: '#777',
+    color: '#9AA1AE',
+    fontSize: 10,
+    lineHeight: 16,
+    marginTop: 14,
+  },
+  emptyText: {
+    color: '#7F8796',
     fontSize: 12,
+    marginTop: 12,
     lineHeight: 18,
-    marginTop: 15,
   },
   consentRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 15,
+    marginTop: 17,
   },
   checkbox: {
-    width: 22,
-    height: 22,
+    width: 21,
+    height: 21,
     borderWidth: 1,
-    borderColor: '#C2185B',
-    borderRadius: 5,
+    borderColor: '#C7CDD8',
+    borderRadius: 6,
     marginRight: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkedBox: {
-    backgroundColor: '#C2185B',
+    backgroundColor: '#D92F55',
+    borderColor: '#D92F55',
   },
   checkmark: {
     color: '#FFFFFF',
-    fontWeight: 'bold',
+    fontWeight: '900',
+    fontSize: 12,
   },
   consentText: {
     flex: 1,
-    color: '#555',
-    fontSize: 13,
-    lineHeight: 19,
+    color: '#687184',
+    fontSize: 11,
+    lineHeight: 17,
+  },
+  contactCountBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F7F8FB',
+    padding: 12,
+    borderRadius: 11,
+    marginTop: 4,
+  },
+  contactCountLabel: {
+    color: '#858D9C',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  contactCountValue: {
+    color: '#D92F55',
+    fontSize: 16,
+    fontWeight: '900',
   },
   subheading: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    marginTop: 25,
-    marginBottom: 12,
-    color: '#333',
-  },
-  emptyText: {
-    color: '#888',
     fontSize: 14,
-    marginTop: 10,
+    fontWeight: '900',
+    marginTop: 25,
+    marginBottom: 9,
+    color: '#30394C',
+  },
+  emptyContacts: {
+    alignItems: 'center',
+    backgroundColor: '#F8F9FC',
+    borderRadius: 13,
+    padding: 18,
+    marginTop: 6,
+  },
+  emptyContactsIcon: {
+    color: '#D92F55',
+    fontSize: 25,
+  },
+  emptySubtext: {
+    color: '#A0A6B3',
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: 'center',
   },
   contactItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingVertical: 13,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0E2E7',
+    borderBottomColor: '#F0F1F5',
+    gap: 10,
   },
-  contactInfo: {
-    flex: 1,
+  avatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    backgroundColor: '#FFF0F2',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  contactName: {
+  avatarText: {
+    color: '#D92F55',
     fontSize: 15,
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: '900',
+  },
+  contactInfo: { flex: 1 },
+  contactName: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#30394C',
   },
   contactPhone: {
-    fontSize: 13,
-    color: '#777',
-    marginTop: 4,
+    fontSize: 10,
+    color: '#8C94A2',
+    marginTop: 3,
   },
   deleteButton: {
-    padding: 9,
-    backgroundColor: '#FCE4EC',
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: '#FFF0F2',
+    borderRadius: 9,
   },
   deleteText: {
-    color: '#C2185B',
-    fontWeight: 'bold',
+    color: '#C43B55',
+    fontWeight: '800',
+    fontSize: 10,
+  },
+  profileCard: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#ECEEF3',
+    borderRadius: 17,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  profileAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: '#20283B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 11,
+  },
+  profileAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  profileCopy: { flex: 1 },
+  profileName: {
+    color: '#30394C',
+    fontSize: 12,
+    fontWeight: '900',
+    marginBottom: 3,
+  },
+  profileText: {
+    fontSize: 10,
+    color: '#8C94A2',
+    marginTop: 2,
+  },
+  profileLogout: {
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    backgroundColor: '#F3F4F8',
+    borderRadius: 9,
+  },
+  profileLogoutText: {
+    color: '#60697B',
+    fontSize: 10,
+    fontWeight: '800',
   },
   footer: {
-    color: '#999',
-    fontSize: 12,
-    marginTop: 10,
-    marginBottom: 20,
+    color: '#A8ADBA',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 10,
   },
 });
