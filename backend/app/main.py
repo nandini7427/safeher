@@ -1,20 +1,24 @@
-
+﻿
 import secrets
+import uuid
+from pathlib import Path
 import json
 import math
 import urllib.request
 import urllib.parse
 
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from .config import settings
-from .database import Base, engine, get_db
-from .models import User, EmergencyContact, Incident, LocationUpdate
+from .database import Base, engine, get_db, SessionLocal
+from .models import User, EmergencyContact, Incident, LocationUpdate, Evidence
 from .schemas import (
     RegisterIn,
     LoginIn,
@@ -25,12 +29,28 @@ from .schemas import (
 )
 from .security import hash_password, verify_password, create_token
 from .deps import current_user
-from .email_service import send_emergency_email
+from .email_service import send_emergency_emails
 
+
+# --------------------------------------------------
+# EVIDENCE STORAGE CONFIGURATION
+# --------------------------------------------------
+
+EVIDENCE_DIR = Path(__file__).resolve().parent.parent / "evidence_storage"
+EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+
+MAX_EVIDENCE_BYTES = 100 * 1024 * 1024
+
+ALLOWED_EVIDENCE_TYPES = {
+    "video/webm",
+    "audio/webm",
+    "video/mp4",
+    "audio/mp4",
+}
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="SafeHer API", version="0.3.0")
+app = FastAPI(title="SafeHer API", version="0.4.0")
 
 
 # --------------------------------------------------
@@ -90,19 +110,20 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 def find_nearby_police_stations(latitude, longitude):
     """
-    Find up to three nearest mapped police stations
-    within 5 km using multiple Overpass servers.
+    Find up to three nearest mapped police stations.
+
+    Search radii:
+    1. 5 km
+    2. 10 km
+    3. 20 km
+
+    Multiple Overpass servers are attempted if a server
+    fails or returns no stations.
     """
 
-    query = f"""
-    [out:json][timeout:20];
-    (
-      node["amenity"="police"](around:5000,{latitude},{longitude});
-      way["amenity"="police"](around:5000,{latitude},{longitude});
-      relation["amenity"="police"](around:5000,{latitude},{longitude});
-    );
-    out center tags;
-    """
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        print("Invalid GPS coordinates supplied for police lookup.")
+        return []
 
     overpass_servers = [
         "https://overpass-api.de/api/interpreter",
@@ -110,120 +131,152 @@ def find_nearby_police_stations(latitude, longitude):
         "https://overpass.private.coffee/api/interpreter",
     ]
 
-    last_error = None
+    search_radii = [5000, 10000, 20000]
 
-    for url in overpass_servers:
-        try:
-            print(f"Trying police lookup server: {url}")
+    for radius in search_radii:
 
-            request_data = urllib.parse.urlencode(
-                {"data": query}
-            ).encode("utf-8")
+        query = f"""
+        [out:json][timeout:25];
+        (
+          node["amenity"="police"](around:{radius},{latitude},{longitude});
+          way["amenity"="police"](around:{radius},{latitude},{longitude});
+          relation["amenity"="police"](around:{radius},{latitude},{longitude});
+        );
+        out center tags;
+        """
 
-            req = urllib.request.Request(
-                url,
-                data=request_data,
-                headers={
-                    "User-Agent": "SafeHerEmergencyApp/1.0",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                method="POST",
-            )
+        for url in overpass_servers:
 
-            with urllib.request.urlopen(req, timeout=25) as response:
-                result = json.loads(
-                    response.read().decode("utf-8")
+            try:
+                print(
+                    f"Police lookup: radius {radius}m, server {url}"
                 )
 
-            stations = []
-            seen = set()
+                request_data = urllib.parse.urlencode(
+                    {"data": query}
+                ).encode("utf-8")
 
-            for element in result.get("elements", []):
-                element_id = (
-                    element.get("type"),
-                    element.get("id")
+                req = urllib.request.Request(
+                    url,
+                    data=request_data,
+                    headers={
+                        "User-Agent": "SafeHerEmergencyApp/1.0",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    method="POST",
                 )
 
-                if element_id in seen:
-                    continue
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    result = json.loads(
+                        response.read().decode("utf-8")
+                    )
 
-                seen.add(element_id)
-                tags = element.get("tags", {})
+                stations = []
+                seen = set()
 
-                if "lat" in element and "lon" in element:
-                    station_lat = element["lat"]
-                    station_lon = element["lon"]
+                for element in result.get("elements", []):
 
-                elif element.get("center"):
-                    station_lat = element["center"]["lat"]
-                    station_lon = element["center"]["lon"]
+                    element_id = (
+                        element.get("type"),
+                        element.get("id")
+                    )
 
-                else:
-                    continue
+                    if element_id in seen:
+                        continue
 
-                distance = calculate_distance(
-                    latitude,
-                    longitude,
-                    station_lat,
-                    station_lon
+                    seen.add(element_id)
+
+                    tags = element.get("tags", {})
+
+                    if "lat" in element and "lon" in element:
+                        station_lat = float(element["lat"])
+                        station_lon = float(element["lon"])
+
+                    elif element.get("center"):
+                        station_lat = float(element["center"]["lat"])
+                        station_lon = float(element["center"]["lon"])
+
+                    else:
+                        continue
+
+                    if not (
+                        -90 <= station_lat <= 90
+                        and -180 <= station_lon <= 180
+                    ):
+                        continue
+
+                    distance = calculate_distance(
+                        latitude,
+                        longitude,
+                        station_lat,
+                        station_lon
+                    )
+
+                    if distance > radius / 1000:
+                        continue
+
+                    name = (
+                        tags.get("name")
+                        or tags.get("official_name")
+                        or "Police station (mapped location)"
+                    )
+
+                    address_parts = [
+                        tags.get("addr:housenumber"),
+                        tags.get("addr:street"),
+                        tags.get("addr:suburb"),
+                        tags.get("addr:city"),
+                        tags.get("addr:state"),
+                        tags.get("addr:postcode"),
+                    ]
+
+                    address = ", ".join(
+                        str(part)
+                        for part in address_parts
+                        if part
+                    )
+
+                    if not address:
+                        address = "Address not available in map data"
+
+                    directions_url = (
+                        "https://www.google.com/maps/dir/?api=1"
+                        f"&destination={station_lat},{station_lon}"
+                    )
+
+                    stations.append({
+                        "name": name,
+                        "latitude": station_lat,
+                        "longitude": station_lon,
+                        "distance_km": round(distance, 2),
+                        "address": address,
+                        "directions_url": directions_url,
+                    })
+
+                stations.sort(
+                    key=lambda item: item["distance_km"]
                 )
 
-                if distance > 5.1:
-                    continue
+                if stations:
+                    print(
+                        f"Found {len(stations)} mapped police station(s) "
+                        f"within {radius} metres."
+                    )
 
-                name = (
-                    tags.get("name")
-                    or tags.get("official_name")
-                    or "Police station"
+                    return stations[:3]
+
+                print(
+                    f"No stations returned by {url} "
+                    f"within {radius} metres. Trying another source."
                 )
 
-                address_parts = [
-                    tags.get("addr:housenumber"),
-                    tags.get("addr:street"),
-                    tags.get("addr:suburb"),
-                    tags.get("addr:city"),
-                ]
-
-                address = ", ".join(
-                    part for part in address_parts if part
+            except Exception as error:
+                print(
+                    f"Police lookup failed on {url}: {error}"
                 )
-
-                if not address:
-                    address = "Address not available in map data"
-
-                directions_url = (
-                    "https://www.google.com/maps/dir/?api=1"
-                    f"&destination={station_lat},{station_lon}"
-                )
-
-                stations.append({
-                    "name": name,
-                    "latitude": station_lat,
-                    "longitude": station_lon,
-                    "distance_km": round(distance, 2),
-                    "address": address,
-                    "directions_url": directions_url,
-                })
-
-            stations.sort(
-                key=lambda item: item["distance_km"]
-            )
-
-            print(
-                f"Police lookup completed: "
-                f"{len(stations)} mapped station(s) found."
-            )
-
-            return stations[:3]
-
-        except Exception as error:
-            last_error = error
-            print(
-                f"Police lookup failed on {url}: {error}"
-            )
 
     print(
-        f"All police lookup servers failed. Last error: {last_error}"
+        "No nearby mapped police stations could be retrieved."
     )
 
     return []
@@ -395,12 +448,174 @@ def delete_contact(
 
 
 # --------------------------------------------------
-# ACTIVATE SOS - GMAIL + LIVE TRACKING + POLICE
+# --------------------------------------------------
+# SOS EMAIL NOTIFICATION WORKER
+# --------------------------------------------------
+
+# Separate worker threads allow police lookup to continue
+# without blocking the SOS API response.
+_notification_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _process_sos_notifications(
+    incident_id: int,
+    user_name: str,
+    recipients: list[dict],
+    latitude: float,
+    longitude: float,
+    accuracy_m: float | None,
+    share_url: str,
+    maps_url: str
+):
+    db = SessionLocal()
+
+    try:
+        incident = db.query(Incident).filter_by(
+            id=incident_id
+        ).first()
+
+        if not incident:
+            print(f"SOS incident {incident_id} was not found.")
+            return
+
+        # Start police lookup concurrently. Do not let a slow
+        # OpenStreetMap response delay the emergency email.
+        police_future = _notification_executor.submit(
+            find_nearby_police_stations,
+            latitude,
+            longitude
+        )
+
+        try:
+            police_stations = police_future.result(timeout=2)
+
+        except TimeoutError:
+            police_stations = []
+            print(
+                "Police lookup is taking longer than 2 seconds. "
+                "Sending SOS email without unverified station details."
+            )
+
+        except Exception as error:
+            police_stations = []
+            print(f"Police lookup failed: {error}")
+
+        if police_stations:
+            police_text = ""
+
+            for index, station in enumerate(
+                police_stations,
+                start=1
+            ):
+                police_text += (
+                    f"\n{index}. {station['name']}\n"
+                    f"Distance: {station['distance_km']} km\n"
+                    f"Address: {station['address']}\n"
+                    f"Station coordinates: "
+                    f"{station['latitude']},{station['longitude']}\n"
+                    f"Directions: {station['directions_url']}\n"
+                )
+
+        else:
+            police_text = (
+                "\nNo nearby mapped police station could be "
+                "verified before this alert was sent.\n"
+                f"Use Google Maps to find a nearby police station: "
+                f"{maps_url}\n"
+                "Call 112 in India for emergency assistance.\n"
+            )
+
+        subject = f"SAFEHER EMERGENCY ALERT - {user_name}"
+
+        body = (
+            f"SAFEHER EMERGENCY ALERT\n"
+            f"========================\n\n"
+            f"{user_name} has activated an SOS alert.\n\n"
+
+            f"CURRENT LOCATION\n"
+            f"Latitude: {latitude}\n"
+            f"Longitude: {longitude}\n"
+            f"Accuracy: {accuracy_m} metres\n"
+            f"Google Maps: {maps_url}\n\n"
+
+            f"LIVE LOCATION TRACKING\n"
+            f"Open this link to view the latest shared location:\n"
+            f"{share_url}\n\n"
+
+            f"NEAREST MAPPED POLICE STATIONS\n"
+            f"===============================\n"
+            f"{police_text}\n"
+
+            f"EMERGENCY ASSISTANCE\n"
+            f"Call 112 in India for emergency assistance.\n\n"
+
+            f"Please contact {user_name} immediately.\n\n"
+
+            f"IMPORTANT:\n"
+            f"Police station information is based on available "
+            f"OpenStreetMap data and may be incomplete.\n"
+            f"Distances are approximate straight-line distances, "
+            f"not road travel distances.\n"
+            f"This alert does not automatically contact police.\n\n"
+
+            f"This is an automated SafeHer alert."
+        )
+
+        results = send_emergency_emails(
+            recipients,
+            subject,
+            body
+        )
+
+        if any(item["status"] == "sent" for item in results):
+            overall = "sent"
+
+        elif results and all(
+            item["status"] == "not_configured"
+            for item in results
+        ):
+            overall = "not_configured"
+
+        else:
+            overall = "failed"
+
+        incident.sms_status = overall
+        db.commit()
+
+        print(
+            f"SOS incident {incident_id}: "
+            f"email notification status = {overall}"
+        )
+
+    except Exception as error:
+        print(
+            f"SOS notification worker failed for incident "
+            f"{incident_id}: {type(error).__name__}: {error}"
+        )
+
+        try:
+            incident = db.query(Incident).filter_by(
+                id=incident_id
+            ).first()
+
+            if incident:
+                incident.sms_status = "failed"
+                db.commit()
+        except Exception:
+            db.rollback()
+
+    finally:
+        db.close()
+
+
+# --------------------------------------------------
+# ACTIVATE SOS - FAST RESPONSE + BACKGROUND EMAIL
 # --------------------------------------------------
 
 @app.post("/api/sos")
 def activate_sos(
     data: SOSIn,
+    background_tasks: BackgroundTasks,
     user: User = Depends(current_user),
     db: Session = Depends(get_db)
 ):
@@ -413,23 +628,35 @@ def activate_sos(
     if not contacts:
         raise HTTPException(
             status_code=400,
-            detail="Add at least one consenting emergency contact before activating SOS"
+            detail=(
+                "Add at least one consenting emergency contact "
+                "before activating SOS"
+            )
         )
 
-    # Create unique tracking token
+    # Snapshot contact information before the request session closes.
+    recipients = [
+        {
+            "contact_id": contact.id,
+            "email": contact.email
+        }
+        for contact in contacts
+    ]
+
     token = secrets.token_urlsafe(32)
 
     incident = Incident(
         user_id=user.id,
         share_token=token,
-        status="active"
+        status="active",
+        sms_status="sending"
     )
 
     db.add(incident)
     db.commit()
     db.refresh(incident)
 
-    # Save initial GPS location
+    # Save the initial GPS location immediately.
     location = LocationUpdate(
         incident_id=incident.id,
         latitude=data.latitude,
@@ -440,7 +667,6 @@ def activate_sos(
     db.add(location)
     db.commit()
 
-    # Tracking and map links
     share_url = f"{settings.frontend_url}/track/{token}"
 
     maps_url = (
@@ -448,123 +674,35 @@ def activate_sos(
         f"{data.latitude},{data.longitude}"
     )
 
-    # Find nearest mapped police stations
-    police_stations = find_nearby_police_stations(
+    # Email and police lookup are processed after the API response.
+    background_tasks.add_task(
+        _process_sos_notifications,
+        incident.id,
+        user.name,
+        recipients,
         data.latitude,
-        data.longitude
+        data.longitude,
+        data.accuracy_m,
+        share_url,
+        maps_url
     )
-
-    # Prepare police station information for email
-    if police_stations:
-
-        police_text = ""
-
-        for index, station in enumerate(
-            police_stations,
-            start=1
-        ):
-
-            police_text += (
-                f"\n{index}. {station['name']}\n"
-                f"Distance: {station['distance_km']} km\n"
-                f"Address: {station['address']}\n"
-                f"Directions: {station['directions_url']}\n"
-            )
-
-    else:
-
-        police_text = (
-            "\nPolice station information could not be retrieved "
-            "at this time.\n"
-            "Please use Google Maps or call 112 in India.\n"
-        )
-
-    subject = f"SAFEHER EMERGENCY ALERT - {user.name}"
-
-    body = (
-        f"SAFEHER EMERGENCY ALERT\n"
-        f"========================\n\n"
-
-        f"{user.name} has activated an SOS alert.\n\n"
-
-        f"CURRENT LOCATION\n"
-        f"Latitude: {data.latitude}\n"
-        f"Longitude: {data.longitude}\n"
-        f"Accuracy: {data.accuracy_m} metres\n"
-        f"Google Maps: {maps_url}\n\n"
-
-        f"LIVE LOCATION TRACKING\n"
-        f"Open this link to view the latest shared location:\n"
-        f"{share_url}\n\n"
-
-        f"NEAREST MAPPED POLICE STATIONS\n"
-        f"===============================\n"
-        f"{police_text}\n"
-
-        f"EMERGENCY ASSISTANCE\n"
-        f"Call 112 in India for emergency assistance.\n\n"
-
-        f"Please contact {user.name} immediately.\n\n"
-
-        f"IMPORTANT:\n"
-        f"Police station information is based on available "
-        f"OpenStreetMap data and may be incomplete.\n"
-        f"This alert does not automatically contact police.\n\n"
-
-        f"This is an automated SafeHer alert."
-    )
-
-    # Send email to every consenting emergency contact
-    results = []
-
-    for contact in contacts:
-
-        if not contact.email:
-            status = "missing_email"
-        else:
-            status, _ = send_emergency_email(
-                contact.email,
-                subject,
-                body
-            )
-
-        results.append({
-            "contact_id": contact.id,
-            "email": contact.email,
-            "status": status
-        })
-
-    if any(item["status"] == "sent" for item in results):
-        overall = "sent"
-
-    elif all(
-        item["status"] == "not_configured"
-        for item in results
-    ):
-        overall = "not_configured"
-
-    else:
-        overall = "failed"
-
-    incident.sms_status = overall
-    db.commit()
 
     return {
         "incident_id": incident.id,
         "status": "active",
-        "email_status": overall,
-        "recipient_results": results,
+        "email_status": "sending",
+        "recipient_results": [],
         "tracking_url": share_url,
         "maps_url": maps_url,
-        "police_stations": police_stations,
+        "police_stations": [],
         "message": (
-            "SOS incident created. Email results are shown above. "
-            "This does not automatically contact police or emergency services."
+            "SOS incident created. Emergency contact email "
+            "notifications are being processed in the background. "
+            "This does not automatically contact police or "
+            "emergency services."
         )
     }
 
-
-# --------------------------------------------------
 # UPDATE LIVE LOCATION
 # --------------------------------------------------
 
@@ -633,6 +771,7 @@ def stop_incident(
 
 
 # --------------------------------------------------
+# --------------------------------------------------
 # INCIDENT HISTORY
 # --------------------------------------------------
 
@@ -652,6 +791,7 @@ def incident_history(
         {
             "id": row.id,
             "status": row.status,
+            "email_status": row.sms_status,
             "created_at": row.created_at.isoformat(),
             "ended_at": (
                 row.ended_at.isoformat()
@@ -666,6 +806,32 @@ def incident_history(
 
 
 # --------------------------------------------------
+# CHECK SOS EMAIL NOTIFICATION STATUS
+# --------------------------------------------------
+
+@app.get("/api/incidents/{incident_id}/notification-status")
+def notification_status(
+    incident_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db)
+):
+
+    incident = db.query(Incident).filter_by(
+        id=incident_id,
+        user_id=user.id
+    ).first()
+
+    if not incident:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found"
+        )
+
+    return {
+        "incident_id": incident.id,
+        "email_status": incident.sms_status
+    }
+
 # PUBLIC LIVE TRACKING
 # --------------------------------------------------
 
@@ -708,3 +874,168 @@ def public_tracking(
         "updated_at": location.recorded_at.isoformat(),
         "status": incident.status
     }
+
+
+# --------------------------------------------------
+# UPLOAD SOS EVIDENCE
+# --------------------------------------------------
+
+@app.post("/api/incidents/{incident_id}/evidence", status_code=201)
+async def upload_evidence(
+    incident_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db)
+):
+
+    incident = db.query(Incident).filter_by(
+        id=incident_id,
+        user_id=user.id
+    ).first()
+
+    if not incident:
+        raise HTTPException(404, "Incident not found")
+
+    content_type = (
+        (file.content_type or "").split(";")[0].lower()
+    )
+
+    if content_type not in ALLOWED_EVIDENCE_TYPES:
+        raise HTTPException(415, "Unsupported evidence format")
+
+    original_filename = Path(
+        (file.filename or "evidence.webm").replace("\\", "/")
+    ).name[:255]
+
+    stored_filename = f"{uuid.uuid4().hex}.webm"
+
+    destination = EVIDENCE_DIR / stored_filename
+
+    total_size = 0
+
+    try:
+
+        with destination.open("wb") as output:
+
+            while True:
+
+                chunk = await file.read(1024 * 1024)
+
+                if not chunk:
+                    break
+
+                total_size += len(chunk)
+
+                if total_size > MAX_EVIDENCE_BYTES:
+                    raise HTTPException(
+                        413,
+                        "Evidence file exceeds the 100 MB limit"
+                    )
+
+                output.write(chunk)
+
+        if total_size == 0:
+            raise HTTPException(400, "Empty evidence file")
+
+        evidence = Evidence(
+            user_id=user.id,
+            incident_id=incident.id,
+            original_filename=original_filename,
+            stored_filename=stored_filename,
+            content_type=content_type,
+            file_size=total_size
+        )
+
+        db.add(evidence)
+        db.commit()
+        db.refresh(evidence)
+
+        return {
+            "id": evidence.id,
+            "incident_id": evidence.incident_id,
+            "filename": evidence.original_filename,
+            "content_type": evidence.content_type,
+            "file_size": evidence.file_size,
+            "message": "Evidence uploaded successfully"
+        }
+
+    except Exception:
+        if destination.exists():
+            destination.unlink()
+        raise
+
+    finally:
+        await file.close()
+
+
+# --------------------------------------------------
+# LIST EVIDENCE FOR AN INCIDENT
+# --------------------------------------------------
+
+@app.get("/api/incidents/{incident_id}/evidence")
+def list_evidence(
+    incident_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db)
+):
+
+    incident = db.query(Incident).filter_by(
+        id=incident_id,
+        user_id=user.id
+    ).first()
+
+    if not incident:
+        raise HTTPException(404, "Incident not found")
+
+    records = db.query(Evidence).filter_by(
+        incident_id=incident_id,
+        user_id=user.id
+    ).order_by(
+        desc(Evidence.created_at)
+    ).all()
+
+    return [
+        {
+            "id": item.id,
+            "incident_id": item.incident_id,
+            "filename": item.original_filename,
+            "content_type": item.content_type,
+            "file_size": item.file_size,
+            "created_at": item.created_at.isoformat()
+        }
+        for item in records
+    ]
+
+
+# --------------------------------------------------
+# DOWNLOAD PRIVATE EVIDENCE
+# --------------------------------------------------
+
+@app.get("/api/evidence/{evidence_id}/download")
+def download_evidence(
+    evidence_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db)
+):
+
+    evidence = db.query(Evidence).filter_by(
+        id=evidence_id,
+        user_id=user.id
+    ).first()
+
+    if not evidence:
+        raise HTTPException(404, "Evidence not found")
+
+    file_path = EVIDENCE_DIR / evidence.stored_filename
+
+    if not file_path.is_file():
+        raise HTTPException(404, "Evidence file is missing")
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=evidence.content_type,
+        filename=evidence.original_filename
+    )
+
+
+

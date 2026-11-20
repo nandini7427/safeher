@@ -13,6 +13,9 @@ import {
   Linking,
 } from 'react-native';
 import * as Location from 'expo-location';
+import { startBrowserEvidenceRecording, stopBrowserEvidenceRecording } from './evidenceRecorder';
+import { enableHelpVoiceTrigger, disableHelpVoiceTrigger } from './voiceTrigger';
+import { listLocalEvidence, getLocalEvidence } from './evidenceStorage';
 
 const API = 'http://127.0.0.1:8001';
 type User = {
@@ -39,7 +42,7 @@ type CurrentLocation = {
 export default function HomeScreen() {
   const [isRegister, setIsRegister] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
-  const [activeSection, setActiveSection] = useState<'home' | 'sos' | 'location' | 'contacts' | 'profile'>('home');
+  const [activeSection, setActiveSection] = useState<'home' | 'sos' | 'location' | 'contacts' | 'profile' | 'evidence'>('home');
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -59,6 +62,13 @@ export default function HomeScreen() {
   const [sosCountdown, setSosCountdown] = useState<number | null>(null);
   const [sosBusy, setSosBusy] = useState(false);
   const [sosResult, setSosResult] = useState('');
+  const [evidenceStatus, setEvidenceStatus] = useState('Evidence recording has not started.');
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState('Voice activation is off.');
+  const [localEvidence, setLocalEvidence] = useState<any[]>([]);
+  const [serverEvidence, setServerEvidence] = useState<any[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState('');
   const [activeIncidentId, setActiveIncidentId] = useState<number | null>(null);
   const activeIncidentIdRef = useRef<number | null>(null);
   const cancelSosRef = useRef(false);
@@ -115,6 +125,63 @@ export default function HomeScreen() {
     return data;
   }
 
+  // Check SOS email notification status without blocking GPS or recording.
+  async function checkSosEmailStatus(
+    incidentId: number,
+    authToken: string
+  ) {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      try {
+        const result = await request(
+          `/api/incidents/${incidentId}/notification-status`,
+          'GET',
+          undefined,
+          authToken
+        );
+
+        const status = result.email_status;
+
+        if (status === 'sent') {
+          setSosResult(
+            'SOS is active. Gmail accepted the emergency email for sending. This does not confirm inbox delivery.'
+          );
+          return;
+        }
+
+        if (status === 'failed') {
+          setSosResult(
+            'SOS is active, but the emergency email notification failed. Please contact your emergency contacts directly.'
+          );
+          return;
+        }
+
+        if (status === 'not_configured') {
+          setSosResult(
+            'SOS is active, but email notifications are not configured. Please contact your emergency contacts directly.'
+          );
+          return;
+        }
+
+        if (status !== 'sending') {
+          setSosResult(
+            `SOS is active. Email notification status: ${status}.`
+          );
+          return;
+        }
+      } catch (error) {
+        setSosResult(
+          'SOS is active. Unable to check email status right now. GPS tracking and evidence recording continue.'
+        );
+        return;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
+    setSosResult(
+      'SOS is active. Email notification is taking longer than expected. Please check the notification status again.'
+    );
+  }
   // Load emergency contacts
   async function loadContacts(authToken: string) {
     const data = await request(
@@ -358,6 +425,7 @@ export default function HomeScreen() {
         setSosResult('SOS cancelled.');
         return;
       }
+
       setSosCountdown(seconds);
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -371,24 +439,26 @@ export default function HomeScreen() {
     }
 
     try {
-      let current = location;
+      // Always obtain a fresh GPS position before sending SOS.
+      const permission = await Location.requestForegroundPermissionsAsync();
 
-      if (!current) {
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.status !== 'granted') {
-          throw new Error('Location permission is required to send SOS.');
-        }
-        const result = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.High,
-        });
-        current = {
-          latitude: result.coords.latitude,
-          longitude: result.coords.longitude,
-          accuracy: result.coords.accuracy,
-        };
-        setLocation(current);
+      if (permission.status !== 'granted') {
+        throw new Error('Location permission is required to send SOS.');
       }
 
+      const gpsResult = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const current: CurrentLocation = {
+        latitude: gpsResult.coords.latitude,
+        longitude: gpsResult.coords.longitude,
+        accuracy: gpsResult.coords.accuracy,
+      };
+
+      setLocation(current);
+
+      // Reuse the existing SOS endpoint and its existing email alert flow.
       const result = await request(
         '/api/sos',
         'POST',
@@ -402,11 +472,33 @@ export default function HomeScreen() {
 
       activeIncidentIdRef.current = result.incident_id;
       setActiveIncidentId(result.incident_id);
+
       setSosResult(
-        `SOS created. Email status: ${result.email_status}. Check recipient results and verify that contacts receive the email.`
+        'SOS is active. Emergency contact email notifications are being processed. GPS tracking and evidence recording will continue.'
       );
 
-      // Begin foreground tracking so subsequent GPS fixes are uploaded.
+      // Check the email result independently.
+      void checkSosEmailStatus(result.incident_id, token);
+
+      // Stop voice recognition before requesting the recording microphone.
+      disableHelpVoiceTrigger();
+      setVoiceEnabled(false);
+      setVoiceStatus('Voice detection paused during SOS recording.');
+
+      // Recording failure must never prevent SOS or GPS tracking.
+      setEvidenceStatus('Requesting camera and microphone permission...');
+
+      void startBrowserEvidenceRecording(result.incident_id, token)
+        .then(() => {
+          setEvidenceStatus('Audio and video recording is active.');
+        })
+        .catch((error: any) => {
+          setEvidenceStatus(
+            `Recording unavailable: ${error?.message || 'Camera or microphone permission was not granted.'} SOS and GPS tracking remain active.`
+          );
+        });
+
+      // Continue live GPS tracking independently of recording.
       await startLiveTracking();
     } catch (error: any) {
       setSosResult(error.message || 'Could not activate SOS.');
@@ -420,6 +512,32 @@ export default function HomeScreen() {
     setSosCountdown(null);
   }
 
+  async function handleEnableVoiceHelp() {
+    try {
+      await enableHelpVoiceTrigger(
+        () => {
+          setVoiceEnabled(false);
+          setVoiceStatus('Help detected. Starting SOS countdown.');
+          void beginSosCountdown();
+        },
+        status => {
+          setVoiceStatus(status);
+        }
+      );
+
+      setVoiceEnabled(true);
+    } catch (error: any) {
+      setVoiceEnabled(false);
+      setVoiceStatus(error.message || 'Could not enable voice activation.');
+    }
+  }
+
+  function handleDisableVoiceHelp() {
+    disableHelpVoiceTrigger();
+    setVoiceEnabled(false);
+    setVoiceStatus('Voice activation is off.');
+  }
+
   async function stopSosIncident() {
     const incidentId = activeIncidentIdRef.current;
     if (incidentId === null) return;
@@ -431,15 +549,29 @@ export default function HomeScreen() {
         undefined,
         token
       );
+
+      setEvidenceStatus('Stopping recording and saving evidence...');
+
+      try {
+        const evidenceResult = await stopBrowserEvidenceRecording();
+        setEvidenceStatus(evidenceResult.message);
+      } catch (evidenceError: any) {
+        setEvidenceStatus(
+          `Recording stop issue: ${evidenceError?.message || 'Evidence could not be saved.'}`
+        );
+      }
+
       activeIncidentIdRef.current = null;
       setActiveIncidentId(null);
       stopLiveTracking();
-      setSosResult('SOS incident stopped. Live location sharing has ended.');
+
+      setSosResult(
+        'SOS incident stopped. Live location sharing has ended.'
+      );
     } catch (error: any) {
       setSosResult(error.message || 'Could not stop SOS incident.');
     }
   }
-
   async function callEmergencyNumber() {
     try {
       await Linking.openURL('tel:112');
@@ -464,6 +596,12 @@ export default function HomeScreen() {
 
   // Logout
   function logout() {
+    if (activeIncidentIdRef.current !== null || sosBusy) {
+      setMessage('Stop SOS before logging out.');
+      return;
+    }
+
+    disableHelpVoiceTrigger();
     stopLiveTracking();
 
     setLoggedIn(false);
@@ -481,6 +619,109 @@ export default function HomeScreen() {
     cancelSosRef.current = true;
   }
 
+
+  // Load local and server evidence for the signed-in user.
+  async function loadEvidence() {
+    setEvidenceLoading(true);
+    setEvidenceError('');
+
+    try {
+      const incidents = await request('/api/incidents', 'GET', undefined, token);
+      const incidentRows = Array.isArray(incidents) ? incidents : [];
+
+      const uploadedGroups = await Promise.all(
+        incidentRows.map(async (incident: any) => {
+          try {
+            const records = await request(
+              `/api/incidents/${incident.id}/evidence`,
+              'GET',
+              undefined,
+              token
+            );
+            return Array.isArray(records) ? records : [];
+          } catch {
+            return [];
+          }
+        })
+      );
+
+      setServerEvidence(uploadedGroups.flat());
+
+      try {
+        const localRecords = await listLocalEvidence();
+        setLocalEvidence(localRecords);
+      } catch (error: any) {
+        setEvidenceError(
+          `Local recordings could not be read: ${error?.message || 'Browser storage unavailable.'}`
+        );
+      }
+    } catch (error: any) {
+      setEvidenceError(
+        error.message || 'Could not load evidence from the server.'
+      );
+    } finally {
+      setEvidenceLoading(false);
+    }
+  }
+
+  // Download a recording saved in this browser.
+  async function downloadLocalEvidence(id: number) {
+    try {
+      const record = await getLocalEvidence(id);
+
+      if (!record) {
+        throw new Error('Local recording was not found.');
+      }
+
+      const url = URL.createObjectURL(record.blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = record.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error: any) {
+      setEvidenceError(error.message || 'Could not download local evidence.');
+    }
+  }
+
+  // Download an uploaded recording through the authenticated API.
+  async function downloadServerEvidence(record: any) {
+    try {
+      const response = await fetch(
+        `${API}/api/evidence/${record.id}/download`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Download failed (${response.status}).`);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = record.filename || `safeher-evidence-${record.id}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error: any) {
+      setEvidenceError(error.message || 'Could not download uploaded evidence.');
+    }
+  }
+
+  // Refresh evidence when the Evidence page is opened.
+  useEffect(() => {
+    if (loggedIn && activeSection === 'evidence') {
+      void loadEvidence();
+    }
+  }, [activeSection, loggedIn, token]);
   // Reusable button
   function ActionButton({
     title,
@@ -517,11 +758,12 @@ export default function HomeScreen() {
 
 
   const navigationItems = [
-    { key: 'home' as const, label: 'Home', icon: '⌂' },
+    { key: 'home' as const, label: 'Home', icon: 'H' },
     { key: 'sos' as const, label: 'Emergency SOS', icon: '!' },
-    { key: 'location' as const, label: 'Live Location', icon: '⌖' },
-    { key: 'contacts' as const, label: 'Trusted Contacts', icon: '♡' },
-    { key: 'profile' as const, label: 'My Profile', icon: '◉' },
+    { key: 'location' as const, label: 'Live Location', icon: 'L' },
+    { key: 'contacts' as const, label: 'Trusted Contacts', icon: 'C' },
+    { key: 'profile' as const, label: 'My Profile', icon: 'P' },
+    { key: 'evidence' as const, label: 'Evidence', icon: 'E' },
   ];
 
   return (
@@ -578,7 +820,7 @@ export default function HomeScreen() {
                 <View style={styles.sidebarStatusDot} />
                 <View style={styles.sidebarStatusCopy}>
                   <Text style={styles.sidebarStatusTitle}>Your safety space</Text>
-                  <Text style={styles.sidebarStatusText}>Private · Secure · Connected</Text>
+                  <Text style={styles.sidebarStatusText}>Private | Secure | Connected</Text>
                 </View>
               </View>
             ) : null}
@@ -598,13 +840,15 @@ export default function HomeScreen() {
                 {activeSection === 'home' ? 'Home' :
                   activeSection === 'sos' ? 'Emergency SOS' :
                   activeSection === 'location' ? 'Live Location' :
-                  activeSection === 'contacts' ? 'Trusted Contacts' : 'My Profile'}
+                  activeSection === 'contacts' ? 'Trusted Contacts' :
+                  activeSection === 'evidence' ? 'Evidence' : 'My Profile'}
               </Text>
               <Text style={styles.pageSubheading}>
                 {activeSection === 'home' ? 'Your personal safety overview.' :
                   activeSection === 'sos' ? 'Emergency assistance and alert controls.' :
                   activeSection === 'location' ? 'Manage your current location and live sharing.' :
-                  activeSection === 'contacts' ? 'Manage the people in your trusted circle.' : 'Your account information and settings.'}
+                  activeSection === 'contacts' ? 'Manage the people in your trusted circle.' :
+                  activeSection === 'evidence' ? 'Your saved and securely uploaded SOS recordings.' : 'Your account information and settings.'}
               </Text>
             </View>
           ) : (
@@ -624,7 +868,7 @@ export default function HomeScreen() {
             </Pressable>
           ) : (
             <View style={styles.secureBadge}>
-              <Text style={styles.secureBadgeText}>● SECURE</Text>
+              <Text style={styles.secureBadgeText}> SECURE</Text>
             </View>
           )}
         </View>
@@ -744,7 +988,7 @@ export default function HomeScreen() {
 
             {(activeSection === 'home' || activeSection === 'sos') && (
               <>
-            {/* SOS — primary action */}
+            {/* SOS  primary action */}
             <View style={styles.sosCard}>
               <View style={styles.sosCardHeader}>
                 <View>
@@ -830,7 +1074,7 @@ export default function HomeScreen() {
               </Text>
 
               <Pressable onPress={callEmergencyNumber} style={styles.call112Button}>
-                <Text style={styles.call112Icon}>☎</Text>
+                <Text style={styles.call112Icon}>112</Text>
                 <Text style={styles.call112Text}>Call emergency services</Text>
                 <Text style={styles.call112Number}>112</Text>
               </Pressable>
@@ -841,6 +1085,38 @@ export default function HomeScreen() {
                 </View>
               ) : null}
 
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Voice Help Activation</Text>
+                <Text style={styles.cardIntro}>
+                  Enable voice recognition to start the existing 5-second SOS countdown when you say "Help".
+                  Keep this browser tab open and visible.
+                </Text>
+
+                <ActionButton
+                  title={voiceEnabled ? 'Disable Voice Help' : 'Enable Voice Help'}
+                  onPress={voiceEnabled ? handleDisableVoiceHelp : handleEnableVoiceHelp}
+                  disabled={activeIncidentId !== null || sosBusy}
+                  secondary={voiceEnabled}
+                />
+
+                <Text style={styles.resultText}>
+                  {voiceStatus}
+                </Text>
+                <Text style={styles.cardIntro}>
+                  Microphone permission is required. Voice detection pauses during SOS recording and may not work when the browser tab is hidden or closed.
+                </Text>
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Audio & Video Evidence</Text>
+                <Text style={styles.cardIntro}>
+                  {evidenceStatus}
+                </Text>
+                <Text style={styles.cardIntro}>
+                  Camera and microphone permission are requested after SOS is successfully created. If recording is unavailable, SOS and location sharing continue.
+                </Text>
+              </View>
               <Text style={styles.safetyDisclaimer}>
                 SafeHer sends alerts to your saved contacts; it does not automatically dispatch police.
                 GPS updates require permission, internet access and the app to remain open.
@@ -861,7 +1137,7 @@ export default function HomeScreen() {
             <View style={styles.quickGrid}>
               <View style={styles.quickTile}>
                 <View style={[styles.quickIcon, styles.quickIconRose]}>
-                  <Text style={styles.quickIconText}>⌖</Text>
+                  <Text style={styles.quickIconText}>*</Text>
                 </View>
                 <Text style={styles.quickTitle}>Location</Text>
                 <Text style={styles.quickValue}>
@@ -870,7 +1146,7 @@ export default function HomeScreen() {
               </View>
               <View style={styles.quickTile}>
                 <View style={[styles.quickIcon, styles.quickIconGreen]}>
-                  <Text style={styles.quickIconText}>◎</Text>
+                  <Text style={styles.quickIconText}>*</Text>
                 </View>
                 <Text style={styles.quickTitle}>Live tracking</Text>
                 <Text style={styles.quickValue}>
@@ -879,7 +1155,7 @@ export default function HomeScreen() {
               </View>
               <View style={styles.quickTile}>
                 <View style={[styles.quickIcon, styles.quickIconGold]}>
-                  <Text style={styles.quickIconText}>♡</Text>
+                  <Text style={styles.quickIconText}>*</Text>
                 </View>
                 <Text style={styles.quickTitle}>Trusted people</Text>
                 <Text style={styles.quickValue}>{contacts.length} saved contacts</Text>
@@ -895,7 +1171,7 @@ export default function HomeScreen() {
             <View style={styles.card}>
               <View style={styles.cardTitleRow}>
                 <View style={styles.sectionIcon}>
-                  <Text style={styles.sectionIconText}>⌖</Text>
+                  <Text style={styles.sectionIconText}>S</Text>
                 </View>
                 <View style={styles.cardTitleCopy}>
                   <Text style={styles.heading}>Live location</Text>
@@ -932,10 +1208,10 @@ export default function HomeScreen() {
               {location ? (
                 <View style={styles.locationDetails}>
                   <Text style={styles.locationTitle}>LOCATION DETAILS</Text>
-                  <Text style={styles.detailText}>Latitude  ·  {location.latitude.toFixed(6)}</Text>
-                  <Text style={styles.detailText}>Longitude  ·  {location.longitude.toFixed(6)}</Text>
+                  <Text style={styles.detailText}>Latitude  |  {location.latitude.toFixed(6)}</Text>
+                  <Text style={styles.detailText}>Longitude  |  {location.longitude.toFixed(6)}</Text>
                   <Text style={styles.detailText}>
-                    Accuracy  ·  {location.accuracy == null ? 'Not available' : `±${Math.round(location.accuracy)} m`}
+                    Accuracy  |  {location.accuracy == null ? 'Not available' : `+/-${Math.round(location.accuracy)} m`}
                   </Text>
                   <ActionButton title="Open in Google Maps" onPress={openGoogleMaps} />
                 </View>
@@ -959,7 +1235,7 @@ export default function HomeScreen() {
             <View style={styles.card}>
               <View style={styles.cardTitleRow}>
                 <View style={styles.sectionIcon}>
-                  <Text style={styles.sectionIconText}>♡</Text>
+                  <Text style={styles.sectionIconText}>S</Text>
                 </View>
                 <View style={styles.cardTitleCopy}>
                   <Text style={styles.heading}>Trusted contacts</Text>
@@ -1005,7 +1281,7 @@ export default function HomeScreen() {
 
               <Pressable style={styles.consentRow} onPress={() => setConsent(!consent)}>
                 <View style={[styles.checkbox, consent && styles.checkedBox]}>
-                  {consent ? <Text style={styles.checkmark}>✓</Text> : null}
+                  {consent ? <Text style={styles.checkmark}>OK</Text> : null}
                 </View>
                 <Text style={styles.consentText}>
                   I confirm this person has agreed to be my emergency contact.
@@ -1013,7 +1289,7 @@ export default function HomeScreen() {
               </Pressable>
 
               <ActionButton
-                title={loading ? 'Please wait...' : '＋  Add trusted contact'}
+                title={loading ? 'Please wait...' : '+ Add trusted contact'}
                 onPress={addContact}
                 disabled={loading}
               />
@@ -1023,7 +1299,7 @@ export default function HomeScreen() {
               <Text style={styles.subheading}>Your saved people</Text>
               {contacts.length === 0 ? (
                 <View style={styles.emptyContacts}>
-                  <Text style={styles.emptyContactsIcon}>♡</Text>
+                  <Text style={styles.emptyContactsIcon}>C</Text>
                   <Text style={styles.emptyText}>No trusted contacts yet.</Text>
                   <Text style={styles.emptySubtext}>Add someone you trust using the form above.</Text>
                 </View>
@@ -1051,6 +1327,91 @@ export default function HomeScreen() {
               </>
             )}
 
+            {activeSection === 'evidence' && (
+              <>
+                <View style={styles.card}>
+                  <View style={styles.cardTitleRow}>
+                    <Text style={styles.sectionTitle}>Your Evidence</Text>
+                    <ActionButton
+                      title={evidenceLoading ? 'Loading...' : 'Refresh'}
+                      onPress={loadEvidence}
+                      disabled={evidenceLoading}
+                      secondary
+                    />
+                  </View>
+
+                  <Text style={styles.cardIntro}>
+                    Recordings are linked to their SOS incident. Local files are stored in this browser; uploaded files are stored securely on your SafeHer backend.
+                  </Text>
+
+                  {evidenceError ? (
+                    <View style={styles.resultPanel}>
+                      <Text style={styles.resultText}>{evidenceError}</Text>
+                    </View>
+                  ) : null}
+
+                  {evidenceLoading ? (
+                    <ActivityIndicator size="large" color="#C83F68" />
+                  ) : null}
+
+                  <Text style={styles.sectionTitle}>Uploaded Evidence</Text>
+
+                  {serverEvidence.length === 0 ? (
+                    <Text style={styles.cardIntro}>
+                      No uploaded recordings found.
+                    </Text>
+                  ) : (
+                    serverEvidence.map((record: any) => (
+                      <View key={`server-${record.id}`} style={styles.contactItem}>
+                        <View style={styles.contactInfo}>
+                          <Text style={styles.contactName}>{record.filename}</Text>
+                          <Text style={styles.contactPhone}>
+                            Incident #{record.incident_id} | {Math.round((record.file_size || 0) / 1024)} KB
+                          </Text>
+                          <Text style={styles.contactPhone}>
+                            {record.created_at ? new Date(record.created_at).toLocaleString() : ''}
+                          </Text>
+                        </View>
+                        <Pressable
+                          onPress={() => downloadServerEvidence(record)}
+                          style={styles.button}
+                        >
+                          <Text style={styles.buttonText}>Download</Text>
+                        </Pressable>
+                      </View>
+                    ))
+                  )}
+
+                  <Text style={styles.sectionTitle}>Saved on This Browser</Text>
+
+                  {localEvidence.length === 0 ? (
+                    <Text style={styles.cardIntro}>
+                      No local recordings found in this browser.
+                    </Text>
+                  ) : (
+                    localEvidence.map((record: any) => (
+                      <View key={`local-${record.id}`} style={styles.contactItem}>
+                        <View style={styles.contactInfo}>
+                          <Text style={styles.contactName}>{record.filename}</Text>
+                          <Text style={styles.contactPhone}>
+                            Incident #{record.incidentId}
+                          </Text>
+                          <Text style={styles.contactPhone}>
+                            {record.createdAt ? new Date(record.createdAt).toLocaleString() : ''}
+                          </Text>
+                        </View>
+                        <Pressable
+                          onPress={() => downloadLocalEvidence(record.id)}
+                          style={styles.button}
+                        >
+                          <Text style={styles.buttonText}>Download</Text>
+                        </Pressable>
+                      </View>
+                    ))
+                  )}
+                </View>
+              </>
+            )}
             {activeSection === 'profile' && (
               <>
             <View style={styles.profileCard}>
@@ -1073,7 +1434,7 @@ export default function HomeScreen() {
           </>
         )}
 
-        <Text style={styles.footer}>SAFEHER  ·  STAY AWARE. STAY SAFE.</Text>
+        <Text style={styles.footer}>SAFEHER  |  STAY AWARE. STAY SAFE.</Text>
       </ScrollView>
       </View>
     </KeyboardAvoidingView>
@@ -1917,3 +2278,4 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 });
+
